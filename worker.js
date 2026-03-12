@@ -944,7 +944,6 @@ function getLiteModelId(modelIds) {
     .map(i => i.split('=')[0].trim())
     .filter(i => i);
   const parts = [
-    'gh/gpt-5-mini',
     'deepseek-v',
     'qwen3-next',
     '-oss-',
