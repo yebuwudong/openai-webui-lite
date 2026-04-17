@@ -6973,7 +6973,7 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
               },
               body: JSON.stringify({
                 question: question,
-                answer: answer
+                answer: answer.replace(/<[^>]+>/g, '') // 去除HTML标签，避免摘要中出现不必要的格式
               })
             })
               .then(response => {
