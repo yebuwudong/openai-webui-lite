@@ -5556,6 +5556,9 @@ function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
           switchSession(sessionId) {
             if (this.isLoading || this.isStreaming || this.isUploadingImage)
               return;
+            // 切换会话时停止所有 TTS 播放并清空音频缓存
+            this.stopAllTts();
+            this.ttsAudioMap = {};
             // 保存当前会话的草稿
             this.saveDraftToCurrentSession();
             this.currentSessionId = sessionId;
@@ -6308,6 +6311,7 @@ function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
 
           // 停止所有正在播放的 TTS 音频
           stopAllTts() {
+            if (!this.ttsSupported || !this.ttsAudioMap) return;
             var audioEls = document.querySelectorAll('.tts-audio-player');
             audioEls.forEach(function (el) {
               if (!el.paused) {
@@ -6337,6 +6341,10 @@ function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
             this.ttsLoadingMsgIndex = msgIndex;
 
             try {
+              const input = (msg.content || '')
+                .replace(/^> 联网搜索：[\\s\\S]*条相关信息。/, '')
+                .replace(/<details class="thinking"[\\s\\S]*?<\\/details>/g, '')
+                .trim();
               var res = await fetch('/speech', {
                 method: 'POST',
                 headers: {
