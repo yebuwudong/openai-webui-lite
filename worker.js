@@ -2711,14 +2711,10 @@ function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
       #ttsSpeedSlider::-webkit-slider-runnable-track,
       #ttsPitchSlider::-webkit-slider-runnable-track {
         background: #e0e0e0;
-        border-radius: 2px;
-        height: 4px;
       }
       #ttsSpeedSlider::-moz-range-track,
       #ttsPitchSlider::-moz-range-track {
         background: #e0e0e0;
-        border-radius: 2px;
-        height: 4px;
       }
       
 </style>
