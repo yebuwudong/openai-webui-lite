@@ -388,7 +388,7 @@ async function handleRequest(request, env = {}) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: 'Bearer ' + getNextApiKey(API_KEY_LIST)
+            Authorization: 'Bearer ' + keyValidation.apiKey
           },
           body: JSON.stringify(modelPayload)
         }),
@@ -575,11 +575,6 @@ async function handleRequest(request, env = {}) {
       return keyValidation.error;
     }
 
-    // 检查是否是有效的密码（SECRET_PASSWORD 或 DEMO_PASSWORD）
-    if (![DEMO_PASSWORD, SECRET_PASSWORD].includes(apiKey)) {
-      return createErrorResponse('Invalid API key. Provide a valid key.', 403);
-    }
-
     // 截取question和answer，避免过长
     const truncatedQuestion =
       question.length <= 300
@@ -632,7 +627,7 @@ ${truncatedAnswer}
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + getNextApiKey(API_KEY_LIST)
+          Authorization: 'Bearer ' + keyValidation.apiKey
         },
         body: JSON.stringify(modelPayload)
       });
