@@ -150,6 +150,9 @@ async function handleRequest(request, env = {}) {
     .map(i => i.trim())
     .filter(i => i);
   const TITLE = getEnv('TITLE', env) || TITLE_DEFAULT;
+  const TTS_API_BASE = (getEnv('TTS_API_BASE', env) || '').replace(/\/$/, '');
+  const TTS_API_KEY = getEnv('TTS_API_KEY', env) || '';
+  const ttsEnabled = !!(TTS_API_BASE && TTS_API_KEY);
 
   let CHAT_TYPE = 'bot';
   if (/openai/i.test(TITLE)) {
@@ -290,7 +293,12 @@ async function handleRequest(request, env = {}) {
 
   // 处理HTML页面请求
   if (apiPath === '/' || apiPath === '/index.html') {
-    const htmlContent = getHtmlContent(MODEL_IDS, TAVILY_KEYS, TITLE);
+    const htmlContent = getHtmlContent(
+      MODEL_IDS,
+      TAVILY_KEYS,
+      TITLE,
+      ttsEnabled
+    );
     return new Response(htmlContent, {
       headers: {
         'Content-Type': 'text/html;charset=UTF-8',
@@ -788,6 +796,74 @@ ${truncatedAnswer}
     } catch (error) {
       console.error('WebDAV proxy error:', error);
       return createErrorResponse('WebDAV proxy error: ' + error.message, 502);
+    }
+  }
+
+  // TTS 语音合成代理接口
+  if (apiPath === '/speech' && apiMethod === 'POST') {
+    let apiKey =
+      url.searchParams.get('key') || request.headers.get('Authorization') || '';
+    apiKey = apiKey.replace('Bearer ', '').trim();
+
+    const keyValidation = await validateAndProcessApiKey(apiKey, 0.1);
+    if (!keyValidation.valid) return keyValidation.error;
+
+    if (!TTS_API_BASE || !TTS_API_KEY) {
+      return createErrorResponse('TTS service not configured', 503);
+    }
+
+    let ttsBody;
+    try {
+      ttsBody = await request.json();
+    } catch (e) {
+      return createErrorResponse('Invalid JSON body', 400);
+    }
+
+    const { input, voice = 'alloy', speed = 1.0, pitch = 1.0 } = ttsBody;
+    if (!input) {
+      return createErrorResponse('Missing input parameter', 400);
+    }
+
+    try {
+      const ttsResponse = await fetch(`${TTS_API_BASE}/v1/audio/speech`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${TTS_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          input,
+          voice,
+          response_format: 'mp3',
+          speed,
+          pitch,
+          cleaning_options: {
+            remove_markdown: true,
+            remove_emoji: true,
+            remove_urls: true,
+            remove_line_breaks: true
+          }
+        })
+      });
+
+      if (!ttsResponse.ok) {
+        const errText = await ttsResponse.text();
+        return createErrorResponse(`TTS error: ${errText}`, ttsResponse.status);
+      }
+
+      const audioBuffer = await ttsResponse.arrayBuffer();
+      return new Response(audioBuffer, {
+        status: 200,
+        headers: {
+          'Content-Type': 'audio/mpeg',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    } catch (error) {
+      console.error('TTS proxy error:', error);
+      return createErrorResponse('TTS proxy failed: ' + error.message, 502);
     }
   }
 
@@ -1415,7 +1491,7 @@ function getManifestContent(title) {
   return str.trim();
 }
 
-function getHtmlContent(modelIds, tavilyKeys, title) {
+function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
   let htmlContent = `<!doctype html>
 <html lang="zh-Hans">
   <head>
@@ -3557,6 +3633,58 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
                     v-html="renderMarkdown(getBotMessageContent(msg, msgIndex))"
                     @click="answerClickHandler"
                   ></div>
+                  <!-- TTS 朗读 footer -->
+                  <div
+                    v-if="ttsSupported && msg.content"
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 8px;
+                      margin-top: 8px;
+                      padding-top: 8px;
+                      border-top: 1px solid #f0f0f0;
+                      min-height: 34px;
+                    "
+                  >
+                    <button
+                      @click="playTts(msg, msgIndex)"
+                      :disabled="ttsLoadingMsgIndex !== null"
+                      :title="ttsLoadingMsgIndex === msgIndex ? '生成中…' : (ttsAudioMap[msgIndex] ? '重新朗读' : '朗读')"
+                      style="
+                        flex-shrink: 0;
+                        background: none;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        padding: 3px 8px;
+                        font-size: 15px;
+                        line-height: 1;
+                        color: #888;
+                        transition:
+                          border-color 0.15s,
+                          color 0.15s,
+                          background 0.15s;
+                      "
+                      @mouseover="\$event.currentTarget.style.borderColor='#5fbdbd';\$event.currentTarget.style.color='#5fbdbd'"
+                      @mouseout="\$event.currentTarget.style.borderColor='#e0e0e0';\$event.currentTarget.style.color='#888'"
+                    >
+                      <span v-if="ttsLoadingMsgIndex === msgIndex">⏳</span>
+                      <span v-else>🔊</span>
+                    </button>
+                    <audio
+                      v-if="ttsAudioMap[msgIndex]"
+                      :src="ttsAudioMap[msgIndex]"
+                      :data-tts-index="msgIndex"
+                      controls
+                      class="tts-audio-player"
+                      style="
+                        flex: 1;
+                        height: 30px;
+                        min-width: 0;
+                        max-width: 100%;
+                      "
+                    ></audio>
+                  </div>
                 </div>
               </template>
               <!-- 流式回答占位（当最后一条是用户消息且正在生成回复时） -->
@@ -4156,6 +4284,114 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
               🔗 测试连接
             </button>
           </div>
+
+          <!-- TTS 语音配置（仅 ttsSupported 时可见） -->
+          <div
+            v-show="ttsSupported"
+            id="ttsConfigSection"
+            style="
+              padding: 16px;
+              background: #f8f9fa;
+              border-radius: 8px;
+              margin-bottom: 10px;
+            "
+          >
+            <label
+              style="
+                display: block;
+                margin-bottom: 12px;
+                font-weight: 600;
+                color: #333;
+              "
+            >
+              🔊 TTS 语音
+            </label>
+            <div style="margin-bottom: 12px">
+              <label
+                style="
+                  display: block;
+                  margin-bottom: 4px;
+                  font-size: 13px;
+                  color: #555;
+                "
+                >音色</label
+              >
+              <select
+                id="ttsVoice"
+                style="
+                  width: 100%;
+                  padding: 8px 12px;
+                  border: 1px solid #ddd;
+                  border-radius: 6px;
+                  font-size: 14px;
+                  box-sizing: border-box;
+                  background: #fff;
+                "
+              >
+                <option value="alloy">alloy — 云扬（专业新闻男声）</option>
+                <option value="ash">ash — 云希（阳光清晰男声）</option>
+                <option value="ballad">ballad — 晓涵（柔美知性女声）</option>
+                <option value="cedar">cedar — 晓秋（成熟沉稳女声）</option>
+                <option value="coral">coral — 晓晓（温柔亲切女声）</option>
+                <option value="echo">echo — 晓北（磁性东北女声）</option>
+                <option value="fable">fable — 云健（激情演讲男声）</option>
+                <option value="marin">marin — 晓颜（清新活泼女声）</option>
+                <option value="nova">nova — 晓伊（活泼年轻女声）</option>
+                <option value="onyx">onyx — 云泽（低沉厚重男声）</option>
+                <option value="sage">sage — 晓萱（冷静理性女声）</option>
+                <option value="shimmer">shimmer — 晓睿（轻柔细腻女声）</option>
+                <option value="verse">verse — 晓墨（多变富表现力女声）</option>
+              </select>
+            </div>
+            <div style="margin-bottom: 12px">
+              <label
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  margin-bottom: 4px;
+                  font-size: 13px;
+                  color: #555;
+                "
+              >
+                <span>语速</span
+                ><span id="ttsSpeedVal" style="color: #5fbdbd; font-weight: 600"
+                  >1.00</span
+                >
+              </label>
+              <input
+                type="range"
+                id="ttsSpeedSlider"
+                min="0.25"
+                max="2.0"
+                step="0.05"
+                style="width: 100%; accent-color: #5fbdbd"
+              />
+            </div>
+            <div>
+              <label
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  margin-bottom: 4px;
+                  font-size: 13px;
+                  color: #555;
+                "
+              >
+                <span>语调</span
+                ><span id="ttsPitchVal" style="color: #5fbdbd; font-weight: 600"
+                  >1.00</span
+                >
+              </label>
+              <input
+                type="range"
+                id="ttsPitchSlider"
+                min="0.5"
+                max="1.5"
+                step="0.05"
+                style="width: 100%; accent-color: #5fbdbd"
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -4176,6 +4412,13 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
             errorMessage: '',
             selectedModel: '',
             availableModels: ['\$MODELS_PLACEHOLDER\$'],
+            ttsSupported: false,
+            // TTS 播放相关
+            ttsVoice: 'alloy',
+            ttsSpeed: 1.0,
+            ttsPitch: 1.0,
+            ttsLoadingMsgIndex: null, // 当前正在生成 TTS 的消息索引
+            ttsAudioMap: {}, // { msgIndex: blobUrl }
             sessions: [],
             currentSessionId: null,
             isFoldRole: false,
@@ -4395,6 +4638,7 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
           window.addEventListener('popstate', this.handlePopState);
 
           await this.loadData();
+          this.loadTtsSettings();
           if (this.sessions.length === 0) {
             this.createNewSession();
           }
@@ -4606,6 +4850,36 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
                     this.reloadPage();
                   });
                 }
+
+                // 填充 TTS 设置值
+                var ttsVoiceEl = \$('#ttsVoice');
+                var ttsSpeedEl = \$('#ttsSpeedSlider');
+                var ttsPitchEl = \$('#ttsPitchSlider');
+                var ttsSpeedValEl = \$('#ttsSpeedVal');
+                var ttsPitchValEl = \$('#ttsPitchVal');
+                if (ttsVoiceEl) ttsVoiceEl.value = this.ttsVoice;
+                if (ttsSpeedEl) {
+                  ttsSpeedEl.value = this.ttsSpeed;
+                  if (ttsSpeedValEl)
+                    ttsSpeedValEl.textContent = Number(this.ttsSpeed).toFixed(
+                      2
+                    );
+                  ttsSpeedEl.addEventListener('input', function () {
+                    if (ttsSpeedValEl)
+                      ttsSpeedValEl.textContent = Number(this.value).toFixed(2);
+                  });
+                }
+                if (ttsPitchEl) {
+                  ttsPitchEl.value = this.ttsPitch;
+                  if (ttsPitchValEl)
+                    ttsPitchValEl.textContent = Number(this.ttsPitch).toFixed(
+                      2
+                    );
+                  ttsPitchEl.addEventListener('input', function () {
+                    if (ttsPitchValEl)
+                      ttsPitchValEl.textContent = Number(this.value).toFixed(2);
+                  });
+                }
               },
               preConfirm: async () => {
                 const isValid = await this.validateAndSaveSettings();
@@ -4815,6 +5089,17 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
             // 保存API Key
             this.apiKey = apiKey;
             await this.saveApiKey();
+
+            // 保存 TTS 设置
+            if (this.ttsSupported) {
+              var ttsVoiceEl = \$('#ttsVoice');
+              var ttsSpeedEl = \$('#ttsSpeedSlider');
+              var ttsPitchEl = \$('#ttsPitchSlider');
+              if (ttsVoiceEl) this.ttsVoice = ttsVoiceEl.value;
+              if (ttsSpeedEl) this.ttsSpeed = parseFloat(ttsSpeedEl.value);
+              if (ttsPitchEl) this.ttsPitch = parseFloat(ttsPitchEl.value);
+              this.saveTtsSettings();
+            }
 
             // 如果切换了存储模式，需要重新加载数据
             if (oldMode !== storageMode) {
@@ -5995,6 +6280,108 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
             return html;
           },
 
+          // ── TTS 朗读 ────────────────────────────────────────────────────
+          saveTtsSettings() {
+            try {
+              localStorage.setItem(
+                'tts_settings',
+                JSON.stringify({
+                  voice: this.ttsVoice,
+                  speed: this.ttsSpeed,
+                  pitch: this.ttsPitch
+                })
+              );
+            } catch (e) {}
+          },
+
+          loadTtsSettings() {
+            try {
+              var saved = localStorage.getItem('tts_settings');
+              if (saved) {
+                var p = JSON.parse(saved);
+                if (p.voice) this.ttsVoice = p.voice;
+                if (p.speed) this.ttsSpeed = p.speed;
+                if (p.pitch) this.ttsPitch = p.pitch;
+              }
+            } catch (e) {}
+          },
+
+          // 停止所有正在播放的 TTS 音频
+          stopAllTts() {
+            var audioEls = document.querySelectorAll('.tts-audio-player');
+            audioEls.forEach(function (el) {
+              if (!el.paused) {
+                el.pause();
+                el.currentTime = 0;
+              }
+            });
+          },
+
+          // 点击朗读按钮
+          async playTts(msg, msgIndex) {
+            // 暂停其他正在播放的音频
+            this.stopAllTts();
+
+            // 已有缓存音频 → 直接播放
+            if (this.ttsAudioMap[msgIndex]) {
+              await this.\$nextTick();
+              var cached = document.querySelector(
+                \`[data-tts-index="\${msgIndex}"]\`
+              );
+              if (cached) cached.play().catch(function () {});
+              return;
+            }
+
+            // 防重入
+            if (this.ttsLoadingMsgIndex !== null) return;
+            this.ttsLoadingMsgIndex = msgIndex;
+
+            try {
+              var res = await fetch('/speech', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: 'Bearer ' + this.apiKey
+                },
+                body: JSON.stringify({
+                  input: msg.content,
+                  voice: this.ttsVoice,
+                  speed: this.ttsSpeed,
+                  pitch: this.ttsPitch
+                })
+              });
+
+              if (!res.ok) {
+                var errText = await res.text();
+                this.showToast('朗读失败: ' + (errText || res.status), 'error');
+                return;
+              }
+
+              var blob = await res.blob();
+              var audioUrl = URL.createObjectURL(blob);
+
+              // 替换旧 URL（如果存在）
+              if (this.ttsAudioMap[msgIndex]) {
+                URL.revokeObjectURL(this.ttsAudioMap[msgIndex]);
+              }
+              // 触发 Vue 响应式更新
+              this.ttsAudioMap = Object.assign({}, this.ttsAudioMap, {
+                [msgIndex]: audioUrl
+              });
+
+              await this.\$nextTick();
+              var audioEl = document.querySelector(
+                \`[data-tts-index="\${msgIndex}"]\`
+              );
+              if (audioEl) audioEl.play().catch(function () {});
+            } catch (e) {
+              this.showToast('朗读出错: ' + e.message, 'error');
+            } finally {
+              this.ttsLoadingMsgIndex = null;
+            }
+          },
+          // ────────────────────────────────────────────────────────────────
+
           copyToClipboard(text) {
             const regexRel = /\\[(\\d+)\\]\\(javascript:void\\(0\\)\\)/g;
             text = text.replace(regexRel, '\$1');
@@ -7127,6 +7514,13 @@ function getHtmlContent(modelIds, tavilyKeys, title) {
 </html>
 `; // htmlContent FINISHED
   htmlContent = htmlContent.replace(`'$MODELS_PLACEHOLDER$'`, `'${modelIds}'`);
+  // 注入 TTS 支持状态
+  if (ttsEnabled) {
+    htmlContent = htmlContent.replace(
+      'ttsSupported: false',
+      'ttsSupported: true'
+    );
+  }
   // 控制"联网搜索"复选框的显隐
   if (!tavilyKeys) {
     htmlContent = htmlContent.replace(`"model-search-label"`, `"hidden"`);
