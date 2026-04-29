@@ -258,7 +258,7 @@ A: 推荐部署 [edgetts-cloudflare-workers-webui](https://github.com/icheer/edg
 A: 通过环境变量 `TITLE` 设置自定义标题，如 `TITLE=My AI Assistant`。标题会同时影响网页标题和 Favicon 的显示样式。
 
 **Q: TITLE 环境变量是如何影响 Favicon 的？**  
-A: `TITLE` 中包含 Gemini、OpenAI、Claude、Qwen、DeepSeek、Router、Nvidia 字样时（忽略大小写），网站 Favicon 会自动变为相应的厂商 Logo，否则 Logo 默认为 ChatBot 的样式。
+A: `TITLE` 中包含 Gemini、OpenAI、Claude、Qwen、DeepSeek、Kimi/Moonshot、Minimax、Zhipu/GLM、Router、Nvidia 字样时（不区分大小写），网站 Favicon 会自动变为相应的厂商 Logo，否则 Logo 默认为 ChatBot 的样式。
 
 ## 📄 许可证
 
