@@ -3653,7 +3653,7 @@ function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
                       align-items: center;
                       gap: 8px;
                       margin-top: 8px;
-                      padding-top: 8px;
+                      padding-top: 12px;
                       border-top: 1px solid #f0f0f0;
                       min-height: 34px;
                     "
