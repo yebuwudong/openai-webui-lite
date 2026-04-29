@@ -947,11 +947,13 @@ function buildProxyRequest(originalRequest, apiKey) {
   // 设置API密钥
   headers.set('Authorization', `Bearer ${apiKey}`);
 
+  const isNode = typeof process !== 'undefined' && process.versions?.node;
   return {
     method: originalRequest.method,
     headers: headers,
     body: originalRequest.body,
-    redirect: 'follow'
+    redirect: 'follow',
+    ...(isNode ? { duplex: 'half' } : {}),
   };
 }
 
