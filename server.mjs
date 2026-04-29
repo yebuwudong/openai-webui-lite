@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import worker from '../worker.js';
+import worker from './worker.js';
 
 const PORT = process.env.PORT || 8787;
 
