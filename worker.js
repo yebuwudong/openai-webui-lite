@@ -5588,6 +5588,9 @@ function getHtmlContent(modelIds, tavilyKeys, title, ttsEnabled = false) {
           createNewSession() {
             if (this.isLoading || this.isStreaming || this.isUploadingImage)
               return;
+            // 切换会话时停止所有 TTS 播放并清空音频缓存
+            this.stopAllTts();
+            this.ttsAudioMap = {};
             // 保存当前会话的草稿
             this.saveDraftToCurrentSession();
             const firstSession = this.sessions[0];
